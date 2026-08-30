@@ -38,6 +38,12 @@ whoever set this up for you).
 
 ## Setup walkthrough (deploying this for real)
 
+**If you have [Claude Code](https://claude.com/claude-code):** open this
+folder in it and just ask it to help you set the bot up. It reads
+`CLAUDE.md` automatically and will walk you through everything below
+interactively — filling in `.env`, deploying, registering the webhook,
+troubleshooting — instead of you following each step by hand.
+
 This section assumes you already have access to a WhatsApp Business
 account through Meta (an App Dashboard with WhatsApp added, an access
 token, and a Phone Number ID) and just need to get this bot running against
