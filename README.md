@@ -59,11 +59,16 @@ python cli_dry_run.py centers
 ### 2. Deploy to a permanent public host
 
 WhatsApp needs a real, always-on HTTPS URL to send messages to — it can't
-call your laptop. **Recommended: [Render](https://render.com).** It's the
-simplest option for this app: connect your GitHub repo, it builds and
-deploys automatically on every push, gives you a permanent `https://` URL
-with no certificate setup, and lets you attach a small persistent disk so
-the SQLite tracking database survives restarts and deploys.
+call your laptop. Two options, depending on whether you'd rather pay a
+small monthly fee for convenience or spend more setup time for $0
+recurring cost.
+
+#### Option A: Render (easiest, ~$5–7/month)
+
+Connect your GitHub repo, it builds and deploys automatically on every
+push, gives you a permanent `https://` URL with no certificate setup, and
+lets you attach a small persistent disk so the SQLite tracking database
+survives restarts and deploys.
 
 1. Push this repo to GitHub if it isn't already.
 2. On Render: **New → Web Service** → connect the repo.
@@ -83,11 +88,58 @@ the SQLite tracking database survives restarts and deploys.
 (Railway and Fly.io are reasonable alternatives with a similar deploy-from-git
 model and persistent volumes, if you'd rather use one of those.)
 
+#### Option B: free hosting on Oracle Cloud
+
+If avoiding a recurring hosting bill matters more than convenience, Oracle
+Cloud's **"Always Free"** tier includes a small VM that runs 24/7 at $0
+indefinitely (not a trial). It's more setup work than Render — you're
+managing a real server instead of clicking through a dashboard — but
+`deploy/setup-server.sh` in this repo automates nearly all of it.
+
+1. Create an account at [cloud.oracle.com](https://cloud.oracle.com). Oracle
+   requires a card on file for identity verification even for the free
+   tier, but the Always Free resources are not billed.
+2. Create a VM instance: **Compute → Instances → Create Instance**. Pick an
+   **Always Free–eligible shape** (e.g. `VM.Standard.A1.Flex` or
+   `VM.Standard.E2.1.Micro`), Ubuntu as the image, and download the SSH key
+   pair Oracle generates during creation — you'll need the private key file
+   to connect.
+3. In the VM's networking settings (or the subnet's **Security List** /
+   **Network Security Group**), add ingress rules allowing TCP ports
+   **22** (SSH), **80**, and **443** from `0.0.0.0/0`. This is a
+   cloud-level firewall separate from the OS — the setup script can't do
+   this step for you.
+4. SSH in and clone the repo:
+   ```bash
+   ssh -i /path/to/downloaded-key.pem ubuntu@<instance-public-ip>
+   git clone https://github.com/evaamin/whatsapp-correction-bot.git
+   cd whatsapp-correction-bot
+   cp .env.example .env      # then fill in real credentials
+   cp centers.example.json centers.json   # then fill in real center numbers
+   ```
+5. Run the setup script:
+   ```bash
+   bash deploy/setup-server.sh
+   ```
+   It installs Python and [Caddy](https://caddyserver.com) (a reverse proxy
+   that provisions free HTTPS certificates automatically), sets up a
+   virtualenv, registers the bot as a systemd service that restarts on
+   crash or reboot, and prints the public HTTPS URL to use as `<your-host>`
+   for the rest of this guide — no domain purchase needed, it uses a free
+   [nip.io](https://nip.io) hostname that maps to the VM's IP.
+6. After editing `.env` or `centers.json` later, restart the service:
+   ```bash
+   sudo systemctl restart whatsapp-bot
+   ```
+   Check logs with `sudo journalctl -u whatsapp-bot -f`.
+
 ### 3. Fill in environment variables
 
-On Render, set these under the service's **Environment** tab (not in a
-committed `.env` file — Render's dashboard is where secrets actually live
-in production). Locally, put the same values in your `.env` file.
+If you're on Render, set these under the service's **Environment** tab
+(not in a committed `.env` file — Render's dashboard is where secrets
+actually live in production). If you're on Oracle Cloud, edit `.env`
+directly on the server as shown in step 2 above. Locally, put the same
+values in your own `.env` file.
 
 | Variable | Value |
 |---|---|

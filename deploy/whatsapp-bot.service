@@ -1,0 +1,15 @@
+[Unit]
+Description=WhatsApp Correction & Follow-up Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/whatsapp-correction-bot
+Environment=PATH=/home/ubuntu/whatsapp-correction-bot/.venv/bin
+ExecStart=/home/ubuntu/whatsapp-correction-bot/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
