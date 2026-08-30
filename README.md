@@ -28,6 +28,154 @@ Tracked per request: id, center, request text, sent timestamp, status
 (`sent` / `acknowledged` / `resolved` / `overdue`), follow-up count,
 response text, resolved timestamp.
 
+## Setup walkthrough (deploying this for real)
+
+This section assumes you already have access to a WhatsApp Business
+account through Meta (an App Dashboard with WhatsApp added, an access
+token, and a Phone Number ID) and just need to get this bot running against
+it. Do the steps in this order — some later steps need values from earlier
+ones.
+
+### 1. Get the code running locally
+
+```bash
+git clone https://github.com/evaamin/whatsapp-correction-bot.git
+cd whatsapp-correction-bot
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+cp centers.example.json centers.json
+```
+
+Verify it works before touching any credentials:
+
+```bash
+pytest tests/ -v          # should show 7 passed
+python cli_dry_run.py centers
+```
+
+### 2. Deploy to a permanent public host
+
+WhatsApp needs a real, always-on HTTPS URL to send messages to — it can't
+call your laptop. **Recommended: [Render](https://render.com).** It's the
+simplest option for this app: connect your GitHub repo, it builds and
+deploys automatically on every push, gives you a permanent `https://` URL
+with no certificate setup, and lets you attach a small persistent disk so
+the SQLite tracking database survives restarts and deploys.
+
+1. Push this repo to GitHub if it isn't already.
+2. On Render: **New → Web Service** → connect the repo.
+3. Build command: `pip install -r requirements.txt`
+4. Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+5. Instance type: pick a paid **Starter** tier or above — the free tier
+   spins down when idle, which breaks both the webhook (it needs to be
+   awake to receive messages any time) and the follow-up scheduler (it
+   needs to keep running in the background to check for overdue requests).
+6. Add a **Persistent Disk**, mounted at `/opt/render/project/src/data`
+   (or wherever you clone to + `/data`) — this is where `data/tracking.db`
+   lives. Without this, every deploy wipes your tracking history.
+7. Once deployed, Render shows you the service's public URL, e.g.
+   `https://whatsapp-correction-bot.onrender.com`. That's your
+   `<your-host>` for the rest of this guide.
+
+(Railway and Fly.io are reasonable alternatives with a similar deploy-from-git
+model and persistent volumes, if you'd rather use one of those.)
+
+### 3. Fill in environment variables
+
+On Render, set these under the service's **Environment** tab (not in a
+committed `.env` file — Render's dashboard is where secrets actually live
+in production). Locally, put the same values in your `.env` file.
+
+| Variable | Value |
+|---|---|
+| `WHATSAPP_PROVIDER` | `meta` |
+| `WHATSAPP_ACCESS_TOKEN` | From Meta App Dashboard → WhatsApp → API Setup |
+| `WHATSAPP_PHONE_NUMBER_ID` | Same page — the "Phone number ID", not the phone number itself |
+| `WHATSAPP_VERIFY_TOKEN` | Any string you make up (e.g. a random password) — you'll reuse it in step 4 |
+| `ANTHROPIC_API_KEY` | From [console.anthropic.com](https://console.anthropic.com) — needs billing credit added; classification is cheap (a fraction of a cent per reply) but requires a non-zero balance |
+| `ANTHROPIC_MODEL` | `claude-haiku-4-5` (already the default — fast and cheap, fine for this task) |
+| `COORDINATOR_WHATSAPP_NUMBER` | The coordinator's WhatsApp number, format `whatsapp:+15551234567` |
+
+Note on the access token: the one generated in API Setup is temporary
+(~24h). For anything longer-running, generate a permanent token via a
+System User in Meta Business Settings instead, so the bot doesn't stop
+working after a day.
+
+### 4. Point Meta's webhook at your deployment
+
+In the Meta App Dashboard → WhatsApp → Configuration:
+
+1. Callback URL: `https://<your-host>/webhook/whatsapp/meta`
+2. Verify token: the same string you set as `WHATSAPP_VERIFY_TOKEN`
+3. Click **Verify and Save** — Meta calls the URL once to confirm you
+   control it; this should succeed instantly if the app is deployed and
+   running.
+4. Subscribe to the **`messages`** webhook field.
+5. **Also required, easy to miss:** the WhatsApp Business Account itself
+   has to be subscribed to *this app* to actually deliver events — ticking
+   the checkbox in step 4 alone doesn't guarantee that. If messages you
+   send never trigger anything on your server, confirm the subscription
+   with:
+   ```bash
+   curl -X POST "https://graph.facebook.com/v21.0/<WABA_ID>/subscribed_apps" \
+     -H "Authorization: Bearer <WHATSAPP_ACCESS_TOKEN>"
+   ```
+   (`WABA_ID` is the WhatsApp Business Account ID shown on the API Setup
+   page.)
+
+### 5. Add the real center numbers
+
+Edit `centers.json` (this file is gitignored — it stays local/private to
+each deployment, never committed):
+
+```json
+{
+  "clinicA": "whatsapp:+15551230001",
+  "clinicB": "whatsapp:+15551230002"
+}
+```
+
+### 6. Check the recipient limits before rolling out to everyone
+
+- **Test-number recipient cap.** If you're still on Meta's free test
+  number (from API Setup, not a verified business number), it can only
+  message up to 5 phone numbers you've manually added as test recipients.
+  To message a real center list you need a verified WhatsApp Business
+  Profile — set that up in the Meta dashboard before rollout if you
+  haven't already; it takes real review time, so start it early.
+- **The 24-hour session window.** WhatsApp only allows free-form,
+  business-initiated messages (like the "New correction request" push) to
+  someone who has messaged your number within the last 24 hours —
+  otherwise the send fails. Easiest fix: have each center send any message
+  ("hi") to the business number once, before you start routing requests to
+  them. For a fully hands-off production flow, you'd instead set up an
+  approved message template with Meta for the initial outreach.
+- **A failed delivery to one center never breaks another's.**
+  `app/messaging.py` logs failures instead of crashing the request — if a
+  reply seems to have gone missing, check the server logs for
+  `Failed to send WhatsApp message`.
+
+### 7. Test it for real
+
+From your own phone (added as a test recipient, or once verified as a
+production number):
+
+```bash
+python cli_dry_run.py send clinicA "Please fix the intake form field"
+```
+
+This creates the tracking record locally and sends the real WhatsApp
+message through your deployed service's configured provider. Reply from
+WhatsApp and confirm the webhook picks it up — check
+`https://<your-host>/requests` to see the record update.
+
+Inspection routes on the running service: `GET /health` (provider +
+Anthropic configuration status), `GET /requests` (JSON dump of all tracked
+requests).
+
 ## Project layout
 
 ```
@@ -45,93 +193,6 @@ tests/                 # pytest suite (runs in heuristic/dry-run mode, no creden
 centers.example.json   # template for centers.json (name -> WhatsApp number)
 .env.example            # template for .env — every credential is a placeholder here
 ```
-
-## Setup
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env
-cp centers.example.json centers.json
-```
-
-Edit `centers.json` to map each center's name to its WhatsApp number:
-
-```json
-{ "clinicA": "whatsapp:+15551230001", "clinicB": "whatsapp:+15551230002" }
-```
-
-### Where to put real credentials
-
-Everything lives in `.env` (gitignored, never committed). Set
-`WHATSAPP_PROVIDER` to `twilio` or `meta` depending on which one you're
-using, then fill in that section:
-
-- **Twilio** — `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
-  `TWILIO_WHATSAPP_NUMBER` from the
-  [Twilio Console](https://console.twilio.com); `TWILIO_WHATSAPP_NUMBER`
-  must be your WhatsApp-enabled Twilio number. `TWILIO_API_KEY_SID` /
-  `TWILIO_API_KEY_SECRET` are optional, only if you provision a separate API
-  key instead of using the main auth token.
-- **Meta WhatsApp Cloud API** — `WHATSAPP_ACCESS_TOKEN` and
-  `WHATSAPP_PHONE_NUMBER_ID` from your Meta App Dashboard's WhatsApp → API
-  Setup page. `WHATSAPP_VERIFY_TOKEN` is any string you choose; enter the
-  same value in the dashboard's webhook Configuration page.
-- `ANTHROPIC_API_KEY` — from [console.anthropic.com](https://console.anthropic.com).
-  Requires billing credit on the account — the free trial credit is small
-  but classification at this volume costs a fraction of a cent per call.
-- `COORDINATOR_WHATSAPP_NUMBER` — the number the coordinator sends requests
-  from. Any inbound message from a different number is treated as a center
-  reply.
-
-Until real credentials are set, the app runs entirely in dry-run mode (see
-below) — no code changes needed.
-
-## Running it for real
-
-```bash
-uvicorn app.main:app --reload
-```
-
-The follow-up scheduler starts automatically with the app (checks every
-`FOLLOWUP_CHECK_INTERVAL_SECONDS`, default 5 minutes). Point your provider's
-webhook at whichever route matches `WHATSAPP_PROVIDER`:
-
-- **Twilio** — set the WhatsApp number's "when a message comes in" webhook
-  to `POST https://<your-host>/webhook/whatsapp`.
-- **Meta** — in the App Dashboard's Configuration page, set the callback
-  URL to `https://<your-host>/webhook/whatsapp/meta` and the verify token to
-  match `WHATSAPP_VERIFY_TOKEN`. Meta calls `GET` on that same URL once to
-  confirm you control it.
-
-`<your-host>` needs to be a real public HTTPS address — for local
-development, a tunnel like `ngrok http 8000` works and gives you one.
-
-### Going from dev/test to real production traffic
-
-- **Recipient limit.** A Meta *test* number (the free one from API Setup)
-  can only message up to 5 phone numbers you've manually added as test
-  recipients — fine for a pilot, not for a real center list. To lift that
-  limit you need a verified WhatsApp Business Profile through Meta, which
-  Twilio's onboarding flow can also walk you through if you switch
-  providers. This takes real setup time; budget for it separately from
-  writing the addresses down.
-- **The 24-hour session window.** WhatsApp only allows free-form
-  business-initiated messages (like the "New correction request" push) to a
-  recipient who has messaged your number within the last 24 hours.
-  Otherwise the send fails with a re-engagement error. In production this
-  usually means getting an approved message template for the initial
-  outreach, or having each center send one message to open the window
-  before you start routing requests to them.
-- **Delivery failures degrade gracefully.** `app/messaging.py` logs (not
-  raises) on a failed send — one center's delivery failure won't crash a
-  request for every other center, but it's worth watching logs for
-  `Failed to send WhatsApp message` if replies seem to be going missing.
-
-Inspection routes: `GET /health`, `GET /requests` (JSON dump of all tracked
-requests).
 
 ## Local dry-run / testing (no credentials needed)
 
