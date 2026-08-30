@@ -28,6 +28,14 @@ Tracked per request: id, center, request text, sent timestamp, status
 (`sent` / `acknowledged` / `resolved` / `overdue`), follow-up count,
 response text, resolved timestamp.
 
+## Something broken, or want a change?
+
+Use this repo's **Issues** tab (top of the GitHub page) — open a new issue
+describing what's not working or what you'd like added. That's the record
+of everything to fix or build next; no need to reach out separately. This
+repo is private, so you'll need to be added as a collaborator first (ask
+whoever set this up for you).
+
 ## Setup walkthrough (deploying this for real)
 
 This section assumes you already have access to a WhatsApp Business
