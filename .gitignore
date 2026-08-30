@@ -1,0 +1,11 @@
+.env
+centers.json
+data/*.db
+data/*.db-journal
+tracking_export.csv
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
