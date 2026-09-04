@@ -32,9 +32,7 @@ response text, resolved timestamp.
 
 Use this repo's **Issues** tab (top of the GitHub page) — open a new issue
 describing what's not working or what you'd like added. That's the record
-of everything to fix or build next; no need to reach out separately. This
-repo is private, so you'll need to be added as a collaborator first (ask
-whoever set this up for you).
+of everything to fix or build next; no need to reach out separately. 
 
 ## Setup walkthrough (deploying this for real)
 
